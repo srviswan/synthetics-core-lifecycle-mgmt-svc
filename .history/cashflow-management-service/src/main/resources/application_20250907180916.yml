@@ -1,0 +1,122 @@
+spring:
+  application:
+    name: cashflow-management-service
+  profiles:
+    active: development
+  
+  datasource:
+    url: jdbc:sqlserver://localhost:1433;databaseName=CashflowDB;encrypt=false;trustServerCertificate=true
+    username: sa
+    password: YourStrong@Passw0rd
+    driver-class-name: com.microsoft.sqlserver.jdbc.SQLServerDriver
+    hikari:
+      maximum-pool-size: 20
+      minimum-idle: 5
+      idle-timeout: 300000
+      max-lifetime: 1200000
+      connection-timeout: 30000
+      validation-timeout: 5000
+      leak-detection-threshold: 60000
+      connection-test-query: "SELECT 1"
+  
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    show-sql: false
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.SQLServerDialect
+        format_sql: true
+        jdbc:
+          batch_size: 50
+        order_inserts: true
+        order_updates: true
+
+server:
+  port: 8083
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,prometheus,threaddump
+  endpoint:
+    health:
+      show-details: always
+      show-components: always
+  metrics:
+    export:
+      prometheus:
+        enabled: true
+
+logging:
+  level:
+    com.synthetics.core: INFO
+    org.springframework: WARN
+    org.hibernate: WARN
+  pattern:
+    console: "%d{yyyy-MM-dd HH:mm:ss} [%thread] %-5level %logger{36} - %msg%n"
+    file: "%d{yyyy-MM-dd HH:mm:ss} [%thread] %-5level %logger{36} - %msg%n"
+  file:
+    name: logs/cashflow-management-service.log
+
+# Thread pool configuration
+thread-pools:
+  trade-processor:
+    core-size: 20
+    max-size: 50
+    queue-capacity: 1000
+    keep-alive: 60s
+    thread-name-prefix: "trade-processor-"
+  
+  position-processor:
+    core-size: 100
+    max-size: 200
+    queue-capacity: 5000
+    keep-alive: 60s
+    thread-name-prefix: "position-processor-"
+
+# IBM MQ configuration
+ibm-mq:
+  connection:
+    host: localhost
+    port: 1414
+    channel: SYSTEM.DEF.SVRCONN
+    queue-manager: QMGR1
+    username: admin
+    password: password
+    connection-timeout: 30000
+    read-timeout: 30000
+    thread-pool-size: 20
+  
+  queues:
+    lifecycle-events: LIFECYCLE.EVENTS
+    position-updates: POSITION.UPDATES
+    cashflows-generated: CASHFLOWS.GENERATED
+    settlement-instructions: SETTLEMENT.INSTRUCTIONS
+    exceptions: EXCEPTIONS.QUEUE
+    dead-letter: DEAD.LETTER.QUEUE
+
+# Resilience4j configuration
+resilience4j:
+  circuitbreaker:
+    instances:
+      reference-data:
+        failure-rate-threshold: 50
+        wait-duration-in-open-state: 30s
+        sliding-window-size: 10
+        minimum-number-of-calls: 5
+  retry:
+    instances:
+      mq-publish:
+        max-attempts: 3
+        wait-duration: 1s
+        exponential-backoff-multiplier: 2
+
+# Cashflow processing configuration
+cashflow:
+  processing:
+    batch-size: 100
+    settlement-date-offset-days: 2
+    max-retry-attempts: 3
+    retry-delay-seconds: 5

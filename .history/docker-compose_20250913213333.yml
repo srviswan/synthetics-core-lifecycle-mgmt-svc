@@ -1,0 +1,117 @@
+version: '3.8'
+
+services:
+  # SQL Server for Trade and Cashflow databases
+  sql-server:
+    image: mcr.microsoft.com/mssql/server:2022-latest
+    container_name: swap-lifecycle-sqlserver
+    ports:
+      - "1433:1433"
+    environment:
+      - ACCEPT_EULA=Y
+      - SA_PASSWORD=YourStrong@Passw0rd
+      - MSSQL_PID=Express
+    volumes:
+      - sql-data:/var/opt/mssql
+      - ./scripts/init-databases.sql:/docker-entrypoint-initdb.d/init-databases.sql
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/mssql-tools/bin/sqlcmd -S localhost -U sa -P YourStrong@Passw0rd -Q 'SELECT 1'"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+
+  # IBM MQ Server
+  mq-server:
+    image: ibmcom/mq:latest
+    container_name: swap-lifecycle-mq
+    ports:
+      - "1414:1414"
+      - "9443:9443"
+    environment:
+      - LICENSE=accept
+      - MQ_QMGR_NAME=QMGR1
+      - MQ_ADMIN_PASSWORD=password
+      - MQ_APP_PASSWORD=password
+    volumes:
+      - mq-data:/mnt/mqm
+      - ./scripts/mq-config:/etc/mqm
+    healthcheck:
+      test: ["CMD", "dspmq", "-m", "QMGR1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+
+  # Cashflow Management Service
+  cashflow-management-service:
+    build:
+      context: ./cashflow-management-service
+      dockerfile: Dockerfile
+    container_name: swap-lifecycle-cashflow-service
+    ports:
+      - "8083:8080"
+    environment:
+      - SPRING_PROFILES_ACTIVE=development
+      - CASHFLOW_DATABASE_URL=jdbc:sqlserver://sql-server:1433;databaseName=CashflowDB;encrypt=false;trustServerCertificate=true
+      - CASHFLOW_DATABASE_USERNAME=sa
+      - CASHFLOW_DATABASE_PASSWORD=YourStrong@Passw0rd
+      - IBM_MQ_HOST=mq-server
+      - IBM_MQ_PORT=1414
+      - IBM_MQ_USERNAME=admin
+      - IBM_MQ_PASSWORD=password
+    depends_on:
+      sql-server:
+        condition: service_healthy
+      mq-server:
+        condition: service_healthy
+    volumes:
+      - ./logs:/app/logs
+      - ./dumps:/app/dumps
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/actuator/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 120s
+
+  # Prometheus for metrics
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: swap-lifecycle-prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml
+      - prometheus-data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+      - '--web.enable-lifecycle'
+    depends_on:
+      - cashflow-management-service
+
+  # Grafana for dashboards
+  grafana:
+    image: grafana/grafana:latest
+    container_name: swap-lifecycle-grafana
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_USERS_ALLOW_SIGN_UP=false
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./monitoring/grafana/dashboards:/etc/grafana/provisioning/dashboards
+      - ./monitoring/grafana/datasources:/etc/grafana/provisioning/datasources
+    depends_on:
+      - prometheus
+
+volumes:
+  sql-data:
+  mq-data:
+  prometheus-data:
+  grafana-data:
+

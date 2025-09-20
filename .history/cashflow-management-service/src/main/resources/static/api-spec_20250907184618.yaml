@@ -1,0 +1,1363 @@
+openapi: 3.0.3
+info:
+  title: Cashflow Management Service API
+  description: |
+    Comprehensive API for deterministic cashflow generation and lifecycle management.
+    
+    This service provides:
+    - Event-driven cashflow generation from trades and positions
+    - Parallel processing for high-volume operations
+    - Settlement instruction publishing
+    - Comprehensive monitoring and observability
+    - Resilience patterns with circuit breakers and retry mechanisms
+    
+    **Key Features:**
+    - Processes 250K contracts and 65K lots per underlier within 1-2 hours
+    - Thread-level metrics per container/server
+    - Event sourcing with comprehensive audit trails
+    - IBM MQ integration for messaging
+    - Mock reference data service for development
+  version: 1.0.0
+  contact:
+    name: Synthetics Core Team
+    email: synthetics-core@company.com
+  license:
+    name: Proprietary
+    url: https://company.com/license
+
+servers:
+  - url: http://localhost:8083
+    description: Development server
+  - url: https://cashflow-api.company.com
+    description: Production server
+
+tags:
+  - name: lifecycle-events
+    description: Lifecycle event processing and management
+  - name: cashflows
+    description: Cashflow generation, querying, and management
+  - name: trades
+    description: Trade processing and position management
+  - name: settlement
+    description: Settlement instruction management
+  - name: monitoring
+    description: Health checks, metrics, and observability
+  - name: reference-data
+    description: Reference data operations
+
+paths:
+  # Lifecycle Events
+  /api/v1/lifecycle-events:
+    post:
+      tags:
+        - lifecycle-events
+      summary: Process lifecycle event
+      description: |
+        Processes a lifecycle event and generates corresponding cashflows.
+        Supports NEW_TRADE, AMENDMENT, PARTIAL_UNWIND, TERMINATION, and FIXING_PUBLISHED events.
+      operationId: processLifecycleEvent
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LifecycleEventRequest'
+            examples:
+              newTrade:
+                summary: New Trade Event
+                value:
+                  eventType: "NEW_TRADE"
+                  eventId: "EVT-2024-001"
+                  tradeId: "TRD-2024-001"
+                  timestamp: "2024-01-15T10:30:00Z"
+                  sourceBlotterId: "BLT-001"
+                  productId: "PROD-001"
+                  economicTermsId: "ET-001"
+                  parties:
+                    - partyId: "PARTY-001"
+                      partyRole: "COUNTERPARTY"
+                      partyName: "Bank ABC"
+                    - partyId: "PARTY-002"
+                      partyRole: "DEALER"
+                      partyName: "Bank XYZ"
+                  lots:
+                    - lotId: "LOT-001"
+                      underlierId: "UND-001"
+                      quantity: 1000
+                      unitPrice: 150.50
+                      currency: "USD"
+                  tradeTimestamp: "2024-01-15T10:30:00Z"
+                  metadata:
+                    source: "blotter-system"
+                    version: "1.0"
+              termination:
+                summary: Termination Event
+                value:
+                  eventType: "TERMINATION"
+                  eventId: "EVT-2024-002"
+                  tradeId: "TRD-2024-001"
+                  timestamp: "2024-01-20T14:00:00Z"
+                  sourceBlotterId: "BLT-001"
+                  terminationId: "TERM-001"
+                  terminationDate: "2024-01-20"
+                  terminationCashflows: ["CF-001", "CF-002"]
+                  metadata:
+                    reason: "early-termination"
+                    user: "trader-001"
+      responses:
+        '200':
+          description: Event processed successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LifecycleEventResponse'
+        '400':
+          description: Invalid event data
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '422':
+          description: Event validation failed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ValidationErrorResponse'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/v1/lifecycle-events/{eventId}:
+    get:
+      tags:
+        - lifecycle-events
+      summary: Get lifecycle event by ID
+      description: Retrieves a specific lifecycle event by its ID
+      operationId: getLifecycleEvent
+      parameters:
+        - name: eventId
+          in: path
+          required: true
+          schema:
+            type: string
+          example: "EVT-2024-001"
+      responses:
+        '200':
+          description: Event found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LifecycleEventResponse'
+        '404':
+          description: Event not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  # Cashflows
+  /api/v1/cashflows:
+    get:
+      tags:
+        - cashflows
+      summary: List cashflows
+      description: Retrieves cashflows with optional filtering and pagination
+      operationId: listCashflows
+      parameters:
+        - name: tradeId
+          in: query
+          schema:
+            type: string
+          description: Filter by trade ID
+          example: "TRD-2024-001"
+        - name: positionId
+          in: query
+          schema:
+            type: string
+          description: Filter by position ID
+          example: "POS-2024-001"
+        - name: cashflowType
+          in: query
+          schema:
+            type: string
+            enum: [PREMIUM, COUPON, DIVIDEND, SETTLEMENT, TERMINATION]
+          description: Filter by cashflow type
+          example: "PREMIUM"
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [ACCRUAL, SCHEDULED_PAYMENT, PAID_NOTSETTLED, SETTLED]
+          description: Filter by cashflow status
+          example: "SCHEDULED_PAYMENT"
+        - name: currency
+          in: query
+          schema:
+            type: string
+          description: Filter by currency
+          example: "USD"
+        - name: settlementDateFrom
+          in: query
+          schema:
+            type: string
+            format: date
+          description: Filter by settlement date (from)
+          example: "2024-01-01"
+        - name: settlementDateTo
+          in: query
+          schema:
+            type: string
+            format: date
+          description: Filter by settlement date (to)
+          example: "2024-12-31"
+        - name: page
+          in: query
+          schema:
+            type: integer
+            minimum: 0
+            default: 0
+          description: Page number (0-based)
+        - name: size
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 1000
+            default: 100
+          description: Page size
+      responses:
+        '200':
+          description: Cashflows retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CashflowListResponse'
+
+  /api/v1/cashflows/{cashflowId}:
+    get:
+      tags:
+        - cashflows
+      summary: Get cashflow by ID
+      description: Retrieves a specific cashflow by its ID
+      operationId: getCashflow
+      parameters:
+        - name: cashflowId
+          in: path
+          required: true
+          schema:
+            type: string
+          example: "CF-2024-001"
+      responses:
+        '200':
+          description: Cashflow found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Cashflow'
+        '404':
+          description: Cashflow not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/v1/cashflows/{cashflowId}/status:
+    patch:
+      tags:
+        - cashflows
+      summary: Update cashflow status
+      description: Updates the status of a cashflow (e.g., mark as paid, settled)
+      operationId: updateCashflowStatus
+      parameters:
+        - name: cashflowId
+          in: path
+          required: true
+          schema:
+            type: string
+          example: "CF-2024-001"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CashflowStatusUpdate'
+      responses:
+        '200':
+          description: Status updated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Cashflow'
+        '400':
+          description: Invalid status transition
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Cashflow not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  # Trades and Positions
+  /api/v1/trades:
+    get:
+      tags:
+        - trades
+      summary: List trades
+      description: Retrieves trades with optional filtering
+      operationId: listTrades
+      parameters:
+        - name: productId
+          in: query
+          schema:
+            type: string
+          description: Filter by product ID
+        - name: tradeDateFrom
+          in: query
+          schema:
+            type: string
+            format: date
+          description: Filter by trade date (from)
+        - name: tradeDateTo
+          in: query
+          schema:
+            type: string
+            format: date
+          description: Filter by trade date (to)
+        - name: page
+          in: query
+          schema:
+            type: integer
+            minimum: 0
+            default: 0
+        - name: size
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 1000
+            default: 100
+      responses:
+        '200':
+          description: Trades retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TradeListResponse'
+
+  /api/v1/trades/{tradeId}:
+    get:
+      tags:
+        - trades
+      summary: Get trade by ID
+      description: Retrieves a specific trade by its ID
+      operationId: getTrade
+      parameters:
+        - name: tradeId
+          in: path
+          required: true
+          schema:
+            type: string
+          example: "TRD-2024-001"
+      responses:
+        '200':
+          description: Trade found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Trade'
+        '404':
+          description: Trade not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/v1/trades/{tradeId}/positions:
+    get:
+      tags:
+        - trades
+      summary: Get positions for trade
+      description: Retrieves all positions for a specific trade
+      operationId: getTradePositions
+      parameters:
+        - name: tradeId
+          in: path
+          required: true
+          schema:
+            type: string
+          example: "TRD-2024-001"
+      responses:
+        '200':
+          description: Positions retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PositionListResponse'
+        '404':
+          description: Trade not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  # Settlement
+  /api/v1/settlement-instructions:
+    get:
+      tags:
+        - settlement
+      summary: List settlement instructions
+      description: Retrieves settlement instructions with optional filtering
+      operationId: listSettlementInstructions
+      parameters:
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [PENDING, SENT, CONFIRMED, FAILED]
+          description: Filter by settlement status
+        - name: currency
+          in: query
+          schema:
+            type: string
+          description: Filter by currency
+        - name: settlementDateFrom
+          in: query
+          schema:
+            type: string
+            format: date
+          description: Filter by settlement date (from)
+        - name: settlementDateTo
+          in: query
+          schema:
+            type: string
+            format: date
+          description: Filter by settlement date (to)
+        - name: page
+          in: query
+          schema:
+            type: integer
+            minimum: 0
+            default: 0
+        - name: size
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 1000
+            default: 100
+      responses:
+        '200':
+          description: Settlement instructions retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SettlementInstructionListResponse'
+
+  /api/v1/settlement-instructions/{reference}:
+    get:
+      tags:
+        - settlement
+      summary: Get settlement instruction by reference
+      description: Retrieves a specific settlement instruction by its reference
+      operationId: getSettlementInstruction
+      parameters:
+        - name: reference
+          in: path
+          required: true
+          schema:
+            type: string
+          example: "SETTLE-2024-001"
+      responses:
+        '200':
+          description: Settlement instruction found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SettlementInstruction'
+        '404':
+          description: Settlement instruction not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  # Reference Data
+  /api/v1/reference-data/parties/{partyId}:
+    get:
+      tags:
+        - reference-data
+      summary: Get party information
+      description: Retrieves party information from the reference data service
+      operationId: getParty
+      parameters:
+        - name: partyId
+          in: path
+          required: true
+          schema:
+            type: string
+          example: "PARTY-001"
+      responses:
+        '200':
+          description: Party information retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Party'
+        '404':
+          description: Party not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/v1/reference-data/underliers/{underlierId}:
+    get:
+      tags:
+        - reference-data
+      summary: Get underlier information
+      description: Retrieves underlier information from the reference data service
+      operationId: getUnderlier
+      parameters:
+        - name: underlierId
+          in: path
+          required: true
+          schema:
+            type: string
+          example: "UND-001"
+      responses:
+        '200':
+          description: Underlier information retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Underlier'
+        '404':
+          description: Underlier not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  # Monitoring and Health
+  /api/v1/health:
+    get:
+      tags:
+        - monitoring
+      summary: Health check
+      description: Returns the health status of the service
+      operationId: healthCheck
+      responses:
+        '200':
+          description: Service is healthy
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+
+  /api/v1/metrics:
+    get:
+      tags:
+        - monitoring
+      summary: Get business metrics
+      description: Returns key business metrics for the service
+      operationId: getBusinessMetrics
+      responses:
+        '200':
+          description: Metrics retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MetricsResponse'
+
+  /api/v1/metrics/processing-stats:
+    get:
+      tags:
+        - monitoring
+      summary: Get processing statistics
+      description: Returns processing statistics including throughput and performance metrics
+      operationId: getProcessingStats
+      responses:
+        '200':
+          description: Processing statistics retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProcessingStatsResponse'
+
+components:
+  schemas:
+    # Lifecycle Events
+    LifecycleEventRequest:
+      type: object
+      required:
+        - eventType
+        - eventId
+        - tradeId
+        - timestamp
+      properties:
+        eventType:
+          type: string
+          enum: [NEW_TRADE, AMENDMENT, PARTIAL_UNWIND, TERMINATION, FIXING_PUBLISHED]
+          description: Type of lifecycle event
+        eventId:
+          type: string
+          maxLength: 50
+          description: Unique identifier for the event
+        tradeId:
+          type: string
+          maxLength: 50
+          description: Trade identifier
+        timestamp:
+          type: string
+          format: date-time
+          description: Event timestamp
+        sourceBlotterId:
+          type: string
+          maxLength: 50
+          description: Source blotter identifier
+        metadata:
+          type: object
+          additionalProperties: true
+          description: Additional event metadata
+        userId:
+          type: string
+          description: User who initiated the event
+        reasonCode:
+          type: string
+          description: Reason code for the event
+        # Event-specific fields
+        productId:
+          type: string
+          description: Product identifier (for NEW_TRADE)
+        economicTermsId:
+          type: string
+          description: Economic terms identifier (for NEW_TRADE)
+        parties:
+          type: array
+          items:
+            $ref: '#/components/schemas/PartyInfo'
+          description: Trade parties (for NEW_TRADE)
+        lots:
+          type: array
+          items:
+            $ref: '#/components/schemas/LotInfo'
+          description: Trade lots (for NEW_TRADE)
+        tradeTimestamp:
+          type: string
+          format: date-time
+          description: Trade timestamp (for NEW_TRADE)
+        amendmentId:
+          type: string
+          description: Amendment identifier (for AMENDMENT)
+        changedFields:
+          type: object
+          additionalProperties: true
+          description: Changed fields (for AMENDMENT)
+        effectiveDate:
+          type: string
+          format: date
+          description: Effective date (for AMENDMENT)
+        revisedLots:
+          type: array
+          items:
+            $ref: '#/components/schemas/RevisedLotInfo'
+          description: Revised lots (for AMENDMENT)
+        amendmentReason:
+          type: string
+          description: Amendment reason (for AMENDMENT)
+        unwindId:
+          type: string
+          description: Unwind identifier (for PARTIAL_UNWIND)
+        lotsToRemove:
+          type: array
+          items:
+            type: string
+          description: Lots to remove (for PARTIAL_UNWIND)
+        notionalReduction:
+          type: string
+          description: Notional reduction amount (for PARTIAL_UNWIND)
+        terminationId:
+          type: string
+          description: Termination identifier (for TERMINATION)
+        terminationDate:
+          type: string
+          format: date
+          description: Termination date (for TERMINATION)
+        terminationCashflows:
+          type: array
+          items:
+            type: string
+          description: Termination cashflows (for TERMINATION)
+        indexId:
+          type: string
+          description: Index identifier (for FIXING_PUBLISHED)
+        fixingDate:
+          type: string
+          format: date
+          description: Fixing date (for FIXING_PUBLISHED)
+        fixingTime:
+          type: string
+          format: date-time
+          description: Fixing time (for FIXING_PUBLISHED)
+        fixingValue:
+          type: number
+          format: double
+          description: Fixing value (for FIXING_PUBLISHED)
+
+    LifecycleEventResponse:
+      type: object
+      properties:
+        eventId:
+          type: string
+          description: Event identifier
+        status:
+          type: string
+          enum: [PROCESSED, FAILED, PENDING]
+          description: Processing status
+        processedAt:
+          type: string
+          format: date-time
+          description: Processing timestamp
+        generatedCashflows:
+          type: array
+          items:
+            type: string
+          description: Generated cashflow IDs
+        errors:
+          type: array
+          items:
+            type: string
+          description: Processing errors (if any)
+        processingTimeMs:
+          type: integer
+          description: Processing time in milliseconds
+
+    # Cashflows
+    Cashflow:
+      type: object
+      properties:
+        cashflowId:
+          type: string
+          description: Unique cashflow identifier
+        tradeId:
+          type: string
+          description: Associated trade identifier
+        positionId:
+          type: string
+          description: Associated position identifier
+        cashflowType:
+          type: string
+          enum: [PREMIUM, COUPON, DIVIDEND, SETTLEMENT, TERMINATION]
+          description: Type of cashflow
+        payerPartyId:
+          type: string
+          description: Payer party identifier
+        receiverPartyId:
+          type: string
+          description: Receiver party identifier
+        currency:
+          type: string
+          description: Currency code
+        amount:
+          type: string
+          description: Cashflow amount
+        settlementDate:
+          type: string
+          format: date
+          description: Settlement date
+        paymentType:
+          type: string
+          enum: [INCOMING, OUTGOING]
+          description: Payment direction
+        cashflowStatus:
+          type: string
+          enum: [ACCRUAL, SCHEDULED_PAYMENT, PAID_NOTSETTLED, SETTLED]
+          description: Current cashflow status
+        statusTransitionTimestamp:
+          type: string
+          format: date-time
+          description: Last status transition timestamp
+        settlementReference:
+          type: string
+          description: Settlement system reference
+        originEventId:
+          type: string
+          description: Originating event identifier
+        revisionNumber:
+          type: integer
+          description: Revision number for versioning
+        createdAt:
+          type: string
+          format: date-time
+          description: Creation timestamp
+        updatedAt:
+          type: string
+          format: date-time
+          description: Last update timestamp
+
+    CashflowListResponse:
+      type: object
+      properties:
+        cashflows:
+          type: array
+          items:
+            $ref: '#/components/schemas/Cashflow'
+        totalElements:
+          type: integer
+          description: Total number of elements
+        totalPages:
+          type: integer
+          description: Total number of pages
+        currentPage:
+          type: integer
+          description: Current page number
+        pageSize:
+          type: integer
+          description: Page size
+
+    CashflowStatusUpdate:
+      type: object
+      required:
+        - status
+      properties:
+        status:
+          type: string
+          enum: [ACCRUAL, SCHEDULED_PAYMENT, PAID_NOTSETTLED, SETTLED]
+          description: New cashflow status
+        settlementReference:
+          type: string
+          description: Settlement system reference (optional)
+        notes:
+          type: string
+          description: Additional notes for the status change
+
+    # Trades and Positions
+    Trade:
+      type: object
+      properties:
+        tradeId:
+          type: string
+          description: Unique trade identifier
+        productId:
+          type: string
+          description: Product identifier
+        economicTermsId:
+          type: string
+          description: Economic terms identifier
+        tradeDate:
+          type: string
+          format: date
+          description: Trade date
+        tradeTimestamp:
+          type: string
+          format: date-time
+          description: Trade timestamp
+        parties:
+          type: array
+          items:
+            $ref: '#/components/schemas/PartyInfo'
+          description: Trade parties
+        positions:
+          type: array
+          items:
+            $ref: '#/components/schemas/Position'
+          description: Trade positions
+        createdAt:
+          type: string
+          format: date-time
+          description: Creation timestamp
+        updatedAt:
+          type: string
+          format: date-time
+          description: Last update timestamp
+
+    TradeListResponse:
+      type: object
+      properties:
+        trades:
+          type: array
+          items:
+            $ref: '#/components/schemas/Trade'
+        totalElements:
+          type: integer
+        totalPages:
+          type: integer
+        currentPage:
+          type: integer
+        pageSize:
+          type: integer
+
+    Position:
+      type: object
+      properties:
+        positionId:
+          type: string
+          description: Unique position identifier
+        tradeId:
+          type: string
+          description: Associated trade identifier
+        underlierId:
+          type: string
+          description: Underlier identifier
+        notionalAmount:
+          type: string
+          description: Notional amount
+        notionalCurrency:
+          type: string
+          description: Notional currency
+        effectiveDate:
+          type: string
+          format: date
+          description: Effective date
+        terminationDate:
+          type: string
+          format: date
+          description: Termination date
+        lots:
+          type: array
+          items:
+            $ref: '#/components/schemas/Lot'
+          description: Position lots
+        createdAt:
+          type: string
+          format: date-time
+          description: Creation timestamp
+        updatedAt:
+          type: string
+          format: date-time
+          description: Last update timestamp
+
+    PositionListResponse:
+      type: object
+      properties:
+        positions:
+          type: array
+          items:
+            $ref: '#/components/schemas/Position'
+        totalElements:
+          type: integer
+        totalPages:
+          type: integer
+        currentPage:
+          type: integer
+        pageSize:
+          type: integer
+
+    # Settlement
+    SettlementInstruction:
+      type: object
+      properties:
+        settlementReference:
+          type: string
+          description: Unique settlement reference
+        cashflowId:
+          type: string
+          description: Associated cashflow identifier
+        payerPartyId:
+          type: string
+          description: Payer party identifier
+        receiverPartyId:
+          type: string
+          description: Receiver party identifier
+        currency:
+          type: string
+          description: Currency code
+        amount:
+          type: string
+          description: Settlement amount
+        settlementDate:
+          type: string
+          format: date
+          description: Settlement date
+        status:
+          type: string
+          enum: [PENDING, SENT, CONFIRMED, FAILED]
+          description: Settlement status
+        sentAt:
+          type: string
+          format: date-time
+          description: Sent timestamp
+        confirmedAt:
+          type: string
+          format: date-time
+          description: Confirmation timestamp
+        failureReason:
+          type: string
+          description: Failure reason (if failed)
+        createdAt:
+          type: string
+          format: date-time
+          description: Creation timestamp
+
+    SettlementInstructionListResponse:
+      type: object
+      properties:
+        settlementInstructions:
+          type: array
+          items:
+            $ref: '#/components/schemas/SettlementInstruction'
+        totalElements:
+          type: integer
+        totalPages:
+          type: integer
+        currentPage:
+          type: integer
+        pageSize:
+          type: integer
+
+    # Reference Data
+    Party:
+      type: object
+      properties:
+        partyId:
+          type: string
+          description: Unique party identifier
+        partyName:
+          type: string
+          description: Party name
+        partyType:
+          type: string
+          enum: [BANK, FUND, CORPORATION, INDIVIDUAL, GOVERNMENT, OTHER]
+          description: Party type
+        leiCode:
+          type: string
+          description: Legal Entity Identifier
+        countryOfIncorporation:
+          type: string
+          description: Country of incorporation
+        isActive:
+          type: boolean
+          description: Whether the party is active
+
+    Underlier:
+      type: object
+      properties:
+        underlierId:
+          type: string
+          description: Unique underlier identifier
+        assetType:
+          type: string
+          enum: [SINGLE_NAME, INDEX, BASKET]
+          description: Asset type
+        primaryIdentifier:
+          type: string
+          description: Primary identifier (ISIN, CUSIP, etc.)
+        identifierType:
+          type: string
+          enum: [ISIN, CUSIP, RIC, BLOOMBERG, INTERNAL]
+          description: Identifier type
+        assetName:
+          type: string
+          description: Asset name
+        currency:
+          type: string
+          description: Asset currency
+        exchange:
+          type: string
+          description: Trading exchange
+        country:
+          type: string
+          description: Asset country
+        isActive:
+          type: boolean
+          description: Whether the underlier is active
+
+    # Supporting Types
+    PartyInfo:
+      type: object
+      required:
+        - partyId
+      properties:
+        partyId:
+          type: string
+          description: Party identifier
+        partyRole:
+          type: string
+          description: Party role in the trade
+        partyName:
+          type: string
+          description: Party name
+
+    LotInfo:
+      type: object
+      required:
+        - lotId
+        - underlierId
+      properties:
+        lotId:
+          type: string
+          description: Lot identifier
+        underlierId:
+          type: string
+          description: Underlier identifier
+        quantity:
+          type: number
+          format: decimal
+          description: Lot quantity
+        unitPrice:
+          type: number
+          format: decimal
+          description: Unit price
+        currency:
+          type: string
+          description: Currency
+
+    RevisedLotInfo:
+      type: object
+      required:
+        - lotId
+        - action
+      properties:
+        lotId:
+          type: string
+          description: Lot identifier
+        action:
+          type: string
+          enum: [ADD, MODIFY, REMOVE]
+          description: Action to perform
+        newQuantity:
+          type: number
+          format: decimal
+          description: New quantity (for MODIFY)
+        newUnitPrice:
+          type: number
+          format: decimal
+          description: New unit price (for MODIFY)
+        newCurrency:
+          type: string
+          description: New currency (for MODIFY)
+
+    Lot:
+      type: object
+      properties:
+        lotId:
+          type: string
+          description: Lot identifier
+        underlierId:
+          type: string
+          description: Underlier identifier
+        quantity:
+          type: number
+          format: decimal
+          description: Lot quantity
+        unitPrice:
+          type: number
+          format: decimal
+          description: Unit price
+        currency:
+          type: string
+          description: Currency
+        effectiveDate:
+          type: string
+          format: date
+          description: Effective date
+        terminationDate:
+          type: string
+          format: date
+          description: Termination date
+
+    # Monitoring
+    HealthResponse:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: [UP, DOWN, DEGRADED]
+          description: Overall service status
+        components:
+          type: object
+          properties:
+            database:
+              type: object
+              properties:
+                status:
+                  type: string
+                  enum: [UP, DOWN]
+                details:
+                  type: object
+            messaging:
+              type: object
+              properties:
+                status:
+                  type: string
+                  enum: [UP, DOWN]
+                details:
+                  type: object
+            referenceData:
+              type: object
+              properties:
+                status:
+                  type: string
+                  enum: [UP, DOWN]
+                details:
+                  type: object
+        timestamp:
+          type: string
+          format: date-time
+          description: Health check timestamp
+
+    MetricsResponse:
+      type: object
+      properties:
+        totalTradesProcessed:
+          type: integer
+          description: Total trades processed
+        totalPositionsProcessed:
+          type: integer
+          description: Total positions processed
+        totalCashflowsGenerated:
+          type: integer
+          description: Total cashflows generated
+        totalSettlementInstructions:
+          type: integer
+          description: Total settlement instructions
+        averageProcessingTimeMs:
+          type: number
+          format: double
+          description: Average processing time in milliseconds
+        throughputPerMinute:
+          type: number
+          format: double
+          description: Throughput per minute
+        errorRate:
+          type: number
+          format: double
+          description: Error rate percentage
+        timestamp:
+          type: string
+          format: date-time
+          description: Metrics timestamp
+
+    ProcessingStatsResponse:
+      type: object
+      properties:
+        threadPools:
+          type: object
+          properties:
+            tradeProcessor:
+              type: object
+              properties:
+                activeThreads:
+                  type: integer
+                corePoolSize:
+                  type: integer
+                maxPoolSize:
+                  type: integer
+                queueSize:
+                  type: integer
+                completedTasks:
+                  type: integer
+            positionProcessor:
+              type: object
+              properties:
+                activeThreads:
+                  type: integer
+                corePoolSize:
+                  type: integer
+                maxPoolSize:
+                  type: integer
+                queueSize:
+                  type: integer
+                completedTasks:
+                  type: integer
+        circuitBreakers:
+          type: object
+          properties:
+            referenceData:
+              type: object
+              properties:
+                state:
+                  type: string
+                  enum: [CLOSED, OPEN, HALF_OPEN]
+                failureRate:
+                  type: number
+                  format: double
+                totalCalls:
+                  type: integer
+                failedCalls:
+                  type: integer
+        jvmMetrics:
+          type: object
+          properties:
+            memoryUsed:
+              type: integer
+              description: Memory used in bytes
+            memoryMax:
+              type: integer
+              description: Maximum memory in bytes
+            threadsLive:
+              type: integer
+              description: Live threads count
+            gcPauseTime:
+              type: number
+              format: double
+              description: GC pause time in milliseconds
+        timestamp:
+          type: string
+          format: date-time
+          description: Statistics timestamp
+
+    # Error Responses
+    ErrorResponse:
+      type: object
+      properties:
+        timestamp:
+          type: string
+          format: date-time
+          description: Error timestamp
+        status:
+          type: integer
+          description: HTTP status code
+        error:
+          type: string
+          description: Error type
+        message:
+          type: string
+          description: Error message
+        path:
+          type: string
+          description: Request path
+        traceId:
+          type: string
+          description: Request trace ID
+
+    ValidationErrorResponse:
+      allOf:
+        - $ref: '#/components/schemas/ErrorResponse'
+        - type: object
+          properties:
+            validationErrors:
+              type: array
+              items:
+                type: object
+                properties:
+                  field:
+                    type: string
+                    description: Field name
+                  message:
+                    type: string
+                    description: Validation error message
+                  rejectedValue:
+                    type: string
+                    description: Rejected value
+
+  securitySchemes:
+    ApiKeyAuth:
+      type: apiKey
+      in: header
+      name: X-API-Key
+      description: API key for authentication
+
+  security:
+    - ApiKeyAuth: []
+
+externalDocs:
+  description: Cashflow Management Service Documentation
+  url: https://docs.company.com/cashflow-management-service

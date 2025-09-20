@@ -1,0 +1,116 @@
+spring:
+  application:
+    name: cashflow-management-service
+  
+  # Disable database for testing
+  autoconfigure:
+    exclude:
+      - org.springframework.boot.autoconfigure.jdbc.DataSourceAutoConfiguration
+      - org.springframework.boot.autoconfigure.orm.jpa.HibernateJpaAutoConfiguration
+      - org.springframework.boot.autoconfigure.jdbc.DataSourceTransactionManagerAutoConfiguration
+
+server:
+  port: 8083
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,prometheus,threaddump
+  endpoint:
+    health:
+      show-details: always
+      show-components: always
+  metrics:
+    export:
+      prometheus:
+        enabled: true
+
+logging:
+  level:
+    com.synthetics.core: INFO
+    org.springframework: WARN
+    org.hibernate: WARN
+  pattern:
+    console: "%d{yyyy-MM-dd HH:mm:ss} [%thread] %-5level %logger{36} - %msg%n"
+
+# Thread pool configuration
+thread-pools:
+  trade-processor:
+    core-size: 20
+    max-size: 50
+    queue-capacity: 1000
+    keep-alive: 60s
+    thread-name-prefix: "trade-processor-"
+  
+  position-processor:
+    core-size: 100
+    max-size: 200
+    queue-capacity: 5000
+    keep-alive: 60s
+    thread-name-prefix: "position-processor-"
+
+# IBM MQ configuration (disabled for testing)
+ibm-mq:
+  connection:
+    host: localhost
+    port: 1414
+    channel: SYSTEM.DEF.SVRCONN
+    queue-manager: QMGR1
+    username: admin
+    password: password
+    connection-timeout: 30000
+    read-timeout: 30000
+    thread-pool-size: 20
+  
+  queues:
+    lifecycle-events: LIFECYCLE.EVENTS
+    position-updates: POSITION.UPDATES
+    cashflows-generated: CASHFLOWS.GENERATED
+    settlement-instructions: SETTLEMENT.INSTRUCTIONS
+    exceptions: EXCEPTIONS.QUEUE
+    dead-letter: DEAD.LETTER.QUEUE
+
+# Resilience4j configuration
+resilience4j:
+  circuitbreaker:
+    instances:
+      reference-data:
+        failure-rate-threshold: 50
+        wait-duration-in-open-state: 30s
+        sliding-window-size: 10
+        minimum-number-of-calls: 5
+  retry:
+    instances:
+      mq-publish:
+        max-attempts: 3
+        wait-duration: 1s
+        exponential-backoff-multiplier: 2
+
+# Cashflow processing configuration
+cashflow:
+  processing:
+    batch-size: 100
+    settlement-date-offset-days: 2
+    max-retry-attempts: 3
+    retry-delay-seconds: 5
+
+# Reference data service configuration
+reference-data:
+  service:
+    type: mock  # Options: mock, real
+  mock:
+    enabled: true
+  real:
+    enabled: false
+
+# OpenAPI Configuration
+springdoc:
+  api-docs:
+    path: /api-docs
+  swagger-ui:
+    path: /swagger-ui.html
+    operationsSorter: method
+    tagsSorter: alpha
+    tryItOutEnabled: true
+  show-actuator: true

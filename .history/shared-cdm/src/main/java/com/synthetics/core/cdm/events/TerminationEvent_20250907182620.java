@@ -1,0 +1,40 @@
+package com.synthetics.core.cdm.events;
+
+import com.fasterxml.jackson.annotation.JsonProperty;
+import lombok.AllArgsConstructor;
+import lombok.Builder;
+import lombok.Data;
+import lombok.EqualsAndHashCode;
+import lombok.NoArgsConstructor;
+
+import java.time.LocalDate;
+import java.time.LocalDateTime;
+import java.util.List;
+
+/**
+ * TerminationEvent representing termination of a trade
+ */
+@Data
+@Builder
+@NoArgsConstructor
+@AllArgsConstructor
+@EqualsAndHashCode(callSuper = true)
+public class TerminationEvent extends LifecycleEvent {
+    
+    @JsonProperty("termination_id")
+    private String terminationId;
+    
+    @JsonProperty("termination_date")
+    private LocalDate terminationDate;
+    
+    @JsonProperty("termination_cashflows")
+    private List<String> terminationCashflows;
+    
+    public TerminationEvent(String eventId, String tradeId, LocalDateTime timestamp, String eventType,
+                          String terminationId, LocalDate terminationDate, List<String> terminationCashflows) {
+        super(eventId, tradeId, timestamp, eventType);
+        this.terminationId = terminationId;
+        this.terminationDate = terminationDate;
+        this.terminationCashflows = terminationCashflows;
+    }
+}
